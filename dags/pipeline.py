@@ -165,6 +165,9 @@ create_table = PostgresOperator(
     dag = dag
 )
 
+start_logic = DummyOperator(task_id="start_logic", trigger_rule = "none_failed",
+                          dag=dag)
+
 
 data_manipulation = PythonOperator(
     task_id='data_manipulation',
@@ -177,8 +180,8 @@ end = DummyOperator(task_id='End', dag=dag)
 RELATIONSHIPS
 """
 start >> branch_op_run >> [FIRST_RUN, MANUAL_RUN] 
-FIRST_RUN >> create_table
-MANUAL_RUN >> data_manipulation 
+FIRST_RUN >> create_table >> start_logic
+MANUAL_RUN >> start_logic >> data_manipulation 
 data_manipulation >> end
 
 if __name__ == "__main__":
