@@ -3,7 +3,6 @@ from airflow.models import DAG
 from sqlalchemy import create_engine
 import pandas as pd
 import os,  random, json
-from airflow.utils.task_group import TaskGroup
 from airflow.operators.dummy_operator import DummyOperator
 from airflow.operators.python_operator import PythonOperator, BranchPythonOperator
 from airflow.providers.postgres.operators.postgres import PostgresOperator
