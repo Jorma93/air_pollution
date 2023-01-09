@@ -164,6 +164,27 @@ create_table = PostgresOperator(
     dag = dag
 )
 
+create_final_table = PostgresOperator(
+    task_id="create_final_table",
+    postgres_conn_id="postgres_local",
+    sql="""
+        drop table if exists air_datas
+        create table if not exists air_datas(
+          country varchar,
+          city varchar,
+          local_date timestamp,
+          O3 integer,
+          NO2 integer,
+          CO integer,
+          PM10 integer,
+          pm_10AQI integer,
+          PM25 integer,
+          pm_25AQI integer
+        );
+    """,
+    dag = dag
+)
+
 start_logic = DummyOperator(task_id="start_logic", trigger_rule = "none_failed",
                           dag=dag)
 
@@ -173,15 +194,79 @@ data_manipulation = PythonOperator(
     python_callable=data_manipulation
 )
 
+prepare_data = PostgresOperator(
+    task_id="prepare_data",
+    postgres_conn_id="postgres_local",
+    sql="""
+          insert into air_datas(
+          country,
+          city,
+          local_date,
+          o3,
+          no2,
+          co,
+          PM10 ,
+          pm_10AQI ,
+          PM25 ,
+          pm_25AQI 
+          )
+          with precalc as (
+          select country, city, local_date
+          from air_pollution
+          where pm_25_aqi is not null or pm_10_aqi is not null),
+          precalc_o3 as(
+          select distinct value , a.country, a.city, a.local_date
+          from air_pollution a join precalc b
+          on a.country = b.country and a.city = b.city and a.local_date = b.local_date
+          where metric = 'o3'),
+          precalc_co as(
+          select distinct value , a.country, a.city, a.local_date
+          from air_pollution a join precalc b
+          on a.country = b.country and a.city = b.city and a.local_date = b.local_date
+          where metric = 'co'),
+          precalc_no2 as(
+          select distinct value , a.country, a.city, a.local_date
+          from air_pollution a join precalc b
+          on a.country = b.country and a.city = b.city and a.local_date = b.local_date
+          where metric = 'no2'),
+          precalc_pm10 as(
+          select distinct value , a.country, a.city, a.local_date, a.pm_10_aqi 
+          from air_pollution a join precalc b
+          on a.country = b.country and a.city = b.city and a.local_date = b.local_date
+          where metric = 'pm10'),
+          precalc_pm25 as(
+          select distinct value , a.country, a.city, a.local_date, a.pm_25_aqi 
+          from air_pollution a join precalc b
+          on a.country = b.country and a.city = b.city and a.local_date = b.local_date
+          where metric = 'pm25'),
+          precalc_final as(
+          select a.country, a.city, a.local_date, f.value as o3, b.value as no2, c.value as co, 
+          d.value as pmi, d.pm_10_aqi as pmi_aqi, e.value as pm25, e.pm_25_aqi as pm25_aqi,
+          ROW_NUMBER() OVER (PARTITION BY a.country, a.city, a.local_date
+                      ORDER BY a.local_date desc) rownum
+          from  precalc a 
+          left join precalc_o3 f on a.country = f.country and a.city = f.city and a.local_date = f.local_date
+          left join precalc_no2 b on a.country = b.country and a.city = b.city and a.local_date = b.local_date
+          left join precalc_co c on a.country = c.country and a.city = c.city and a.local_date = c.local_date
+          left join precalc_pm10 d on a.country = d.country and a.city = d.city and a.local_date = d.local_date
+          left join precalc_pm25 e on a.country = e.country and a.city = e.city and a.local_date = e.local_date)
+          select country, city, local_date, o3,no2,co,pmi,pmi_aqi,pm25,pm25_aqi
+          from precalc_final
+          where rownum = 1
+             ;
+    """,
+    dag = dag
+)
+
 end = DummyOperator(task_id='End', dag=dag)
 
 """
 RELATIONSHIPS
 """
 start >> branch_op_run >> [FIRST_RUN, MANUAL_RUN] 
-FIRST_RUN >> create_table >> start_logic
+FIRST_RUN >> create_table >> create_final_table >> start_logic
 MANUAL_RUN >> start_logic >> data_manipulation 
-data_manipulation >> end
+data_manipulation >> prepare_data >> end
 
 if __name__ == "__main__":
     dag.cli()
